@@ -1,57 +1,78 @@
-# advocacia
-prazos e tarefas
 import datetime
 import json
 import os
 
+# Nome do arquivo onde os dados serão persistidos
 DATA_FILE = "tarefas.json"
+
+# Definição da ordem numérica das prioridades para fins de ordenação
 ORDEM_PRIORIDADE = {"Urgente": 0, "Alta": 1, "Media": 2, "Baixa": 3}
 
+# --- Funções de Persistência e Utilitários ---
+
 def carregar_tarefas():
+    """Carrega as tarefas do arquivo JSON. Retorna lista vazia se o arquivo não existir ou estiver corrompido."""
     if not os.path.exists(DATA_FILE):
         return []
+    
     with open(DATA_FILE, "r", encoding="utf-8") as f:
         try:
+            # Carrega o conteúdo do JSON
             return json.load(f)
         except json.JSONDecodeError:
-            print("Arquivo de dados corrompido. Iniciando com lista vazia.")
+            print("🚨 Arquivo de dados corrompido. Iniciando com lista vazia.")
             return []
 
 def salvar_tarefas(tarefas):
+    """Salva a lista completa de tarefas no arquivo JSON."""
     with open(DATA_FILE, "w", encoding="utf-8") as f:
+        # Usa indent=2 para formatar o JSON de forma legível
         json.dump(tarefas, f, ensure_ascii=False, indent=2)
 
 def proximo_id(tarefas):
+    """Calcula o próximo ID sequencial baseado nos IDs existentes."""
     if not tarefas:
         return 1
+    # Garante que mesmo tarefas sem 'id' não causem erro no cálculo do máximo
     return max(t.get("id", 0) for t in tarefas) + 1
 
+# --- Funções de Validação de Entrada ---
+
 def ler_data(prompt):
+    """Lê e valida a entrada de data no formato AAAA-MM-DD."""
     while True:
         s = input(prompt).strip()
         try:
-            dt = datetime.date.fromisoformat(s)
-            return dt.isoformat()
+            # Tenta criar um objeto date para validar o formato
+            datetime.date.fromisoformat(s)
+            return s  # Retorna a string ISO formatada
         except ValueError:
-            print("Formato inválido. Use AAAA-MM-DD.")
+            print("❌ Formato de data inválido. Use AAAA-MM-DD.")
 
 def ler_prioridade(prompt):
+    """Lê e valida a prioridade, aceitando apenas valores válidos."""
     while True:
         p = input(prompt).strip().capitalize()
         if p in ORDEM_PRIORIDADE:
             return p
-        print("Prioridade inválida. Use: Urgente, Alta, Media ou Baixa.")
+        print(f"❌ Prioridade inválida. Use: {', '.join(ORDEM_PRIORIDADE.keys())}.")
+
+# --- Funções de Lógica de Negócio ---
 
 def adicionar_tarefa(tarefas):
-    print("\n--- Adicionar Nova Tarefa ---")
+    """Permite ao usuário adicionar uma nova tarefa à lista."""
+    print("\n--- ➕ Adicionar Nova Tarefa ---")
+    
     while True:
         descricao = input("Descrição da Tarefa: ").strip()
         if descricao:
             break
         print("Descrição não pode ficar vazia.")
+        
     processo = input("Nº do Processo (ou ref.) [opcional]: ").strip()
     prazo_iso = ler_data("Prazo Final (AAAA-MM-DD): ")
     prioridade = ler_prioridade("Prioridade (Urgente/Alta/Media/Baixa): ")
+    
     nova = {
         "id": proximo_id(tarefas),
         "descricao": descricao,
@@ -61,22 +82,32 @@ def adicionar_tarefa(tarefas):
         "concluida": False,
         "criada_em": datetime.date.today().isoformat()
     }
+    
     tarefas.append(nova)
     salvar_tarefas(tarefas)
     print(f"\n✅ Tarefa '{descricao}' adicionada (ID: {nova['id']}).")
 
 def ordenar_tarefas_para_apresentacao(lista):
+    """Ordena a lista de tarefas, priorizando por Prazo e, em seguida, por Prioridade."""
+    
     def chave(t):
         try:
+            # Converte o prazo para um objeto date para comparação correta
             prazo = datetime.date.fromisoformat(t.get("prazo"))
         except Exception:
-            # se faltar/estiver inválido, coloca no final
-            prazo = datetime.date.max
+            # Coloca tarefas sem prazo válido no final
+            prazo = datetime.date.max 
+            
+        # Prioridade numérica (0=Urgente, 3=Baixa)
         prioridade_ord = ORDEM_PRIORIDADE.get(t.get("prioridade", ""), 99)
+        
         return (prazo, prioridade_ord)
+        
     return sorted(lista, key=chave)
 
 def exibir_tarefas(tarefas, filtro="ativas"):
+    """Exibe as tarefas com base no filtro (ativas, concluídas ou todas), aplicando a ordenação."""
+    
     if filtro == "ativas":
         subset = [t for t in tarefas if not t.get("concluida", False)]
         titulo = "Tarefas Ativas (ordenadas por prazo/prioridade)"
@@ -92,82 +123,110 @@ def exibir_tarefas(tarefas, filtro="ativas"):
         return
 
     ordenadas = ordenar_tarefas_para_apresentacao(subset)
-    print(f"\n--- {titulo} ---")
+    print(f"\n--- {titulo} ({len(subset)} itens) ---")
+    
     hoje = datetime.date.today()
     for t in ordenadas:
-        prazo_dt = None
+        
+        # Cálculo e Status do Prazo
         status_prazo = ""
         try:
             prazo_dt = datetime.date.fromisoformat(t.get("prazo"))
             dias = (prazo_dt - hoje).days
-            status_prazo = f"({dias} dias restantes)" if dias >= 0 else "(PRAZO VENCIDO!)"
+            if t.get("concluida"):
+                status_prazo = "✅ (Concluída)"
+            elif dias < 0:
+                status_prazo = f"🚨 (PRAZO VENCIDO há {-dias} dias!)"
+            else:
+                status_prazo = f"⏳ ({dias} dias restantes)"
         except Exception:
-            status_prazo = "(Prazo inválido)"
+            status_prazo = "❓ (Prazo não definido)"
+            
+        # Formatação de Exibição
         sinal = "X" if t.get("concluida") else " "
-        print(f"ID {t['id']:>3} [{sinal}] [P:{t.get('prioridade','?')[:1]}] {t.get('descricao')}")
+        
+        print(f"ID {t['id']:>3} [{sinal}] [P:{t.get('prioridade','?')}] {t.get('descricao')}")
+        
         proc = t.get("processo_num")
         if proc:
             print(f"    Processo: {proc}")
+            
         print(f"    Prazo: {t.get('prazo')} {status_prazo}")
+        
         if t.get("concluida") and t.get("concluida_em"):
             print(f"    Concluída em: {t.get('concluida_em')}")
         print("-" * 50)
 
 def marcar_concluida(tarefas):
+    """Marca uma tarefa ativa como concluída e registra a data."""
     exibir_tarefas(tarefas, filtro="ativas")
-    ativas = [t for t in tarefas if not t.get("concluida", False)]
-    if not ativas:
+    
+    if not [t for t in tarefas if not t.get("concluida", False)]:
         return
+        
     try:
         s = input("\nDigite o ID da tarefa para marcar como CONCLUÍDA: ").strip()
         id_selecionado = int(s)
     except ValueError:
-        print("ID inválido.")
+        print("❌ ID inválido.")
         return
+        
     for t in tarefas:
         if t.get("id") == id_selecionado and not t.get("concluida", False):
             t["concluida"] = True
             t["concluida_em"] = datetime.date.today().isoformat()
             salvar_tarefas(tarefas)
-            print(f"✅ Tarefa ID {id_selecionado} marcada como concluída.")
+            print(f"✅ Tarefa ID {id_selecionado} ({t.get('descricao')}) marcada como concluída.")
             return
-    print("Nenhuma tarefa ativa encontrada com esse ID.")
+            
+    print("❌ Nenhuma tarefa ativa encontrada com esse ID.")
 
 def remover_tarefa(tarefas):
+    """Remove uma tarefa do arquivo de dados permanentemente."""
     exibir_tarefas(tarefas, filtro="todas")
+    
+    if not tarefas:
+        return
+
     try:
         s = input("\nDigite o ID da tarefa para REMOVER (permanente): ").strip()
         id_sel = int(s)
     except ValueError:
-        print("ID inválido.")
+        print("❌ ID inválido.")
         return
+        
     for idx, t in enumerate(tarefas):
         if t.get("id") == id_sel:
-            confirma = input(f"Confirma remoção da tarefa '{t.get('descricao')}'? (s/N): ").strip().lower()
+            confirma = input(f"❗ Confirma remoção da tarefa '{t.get('descricao')}'? (s/N): ").strip().lower()
             if confirma == "s":
                 tarefas.pop(idx)
                 salvar_tarefas(tarefas)
-                print("Tarefa removida.")
+                print("🗑️ Tarefa removida permanentemente.")
             else:
                 print("Remoção cancelada.")
             return
-    print("ID não encontrado.")
+            
+    print("❌ ID não encontrado.")
+
+# --- Menu Principal ---
 
 def menu_principal():
+    """Função principal que gerencia o fluxo do programa."""
     tarefas = carregar_tarefas()
 
-    # se não existir nenhum dado, sugerir tarefas de exemplo (apenas para teste)
-    if not tarefas:
+    # Se a lista estiver vazia e o arquivo não existir, adiciona exemplos para demonstração
+    if not tarefas and not os.path.exists(DATA_FILE):
+        print("\n[Inicialização] Adicionando tarefas de exemplo...")
         tarefas.extend([
-            {'id': 1, 'descricao': 'Analisar jurisprudência do TJ-SP para caso Z', 'prazo': '2025-10-25', 'processo_num': '0001', 'prioridade': 'Alta', 'concluida': False, 'criada_em': '2025-10-01'},
-            {'id': 2, 'descricao': 'Protocolar defesa do cliente Silva - Prazo final!', 'prazo': '2025-10-21', 'processo_num': '0002', 'prioridade': 'Urgente', 'concluida': False, 'criada_em': '2025-10-02'},
-            {'id': 3, 'descricao': 'Organizar arquivos físicos de 2024', 'prazo': '2026-01-30', 'processo_num': 'ADM-001', 'prioridade': 'Baixa', 'concluida': False, 'criada_em': '2025-09-01'},
+            {'id': proximo_id(tarefas), 'descricao': 'Analisar jurisprudência do TJ-SP para caso Z', 'prazo': '2025-10-25', 'processo_num': '0001', 'prioridade': 'Alta', 'concluida': False, 'criada_em': '2025-10-28'},
+            {'id': proximo_id(tarefas), 'descricao': 'Protocolar defesa do cliente Silva - Prazo final!', 'prazo': '2025-10-29', 'processo_num': '0002', 'prioridade': 'Urgente', 'concluida': False, 'criada_em': '2025-10-28'},
+            {'id': proximo_id(tarefas), 'descricao': 'Organizar arquivos físicos de 2024', 'prazo': '2026-01-30', 'processo_num': 'ADM-001', 'prioridade': 'Baixa', 'concluida': False, 'criada_em': '2025-10-28'},
         ])
         salvar_tarefas(tarefas)
 
     while True:
         print("\n" + "="*40)
-        print("  📅 GESTÃO DE TAREFAS ADVOCACIA")
+        print("  ⚖️ GESTÃO DE TAREFAS ADVOCACIA")
         print("="*40)
         print("1. Adicionar Tarefa")
         print("2. Visualizar Tarefas Ativas (Por Prazo)")
@@ -176,7 +235,10 @@ def menu_principal():
         print("5. Remover Tarefa (permanente)")
         print("6. Visualizar Todas as Tarefas")
         print("7. Sair")
+        print("="*40)
+        
         escolha = input("Escolha uma opção: ").strip()
+        
         if escolha == '1':
             adicionar_tarefa(tarefas)
         elif escolha == '2':
@@ -193,7 +255,7 @@ def menu_principal():
             print("Saindo do sistema. Até breve!")
             break
         else:
-            print("Opção inválida. Tente novamente.")
+            print("❌ Opção inválida. Tente novamente.")
 
 if __name__ == "__main__":
     menu_principal()
